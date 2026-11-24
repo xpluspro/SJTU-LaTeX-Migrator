@@ -1,4 +1,4 @@
-use super::{app_state, prepare_items, process_item, MigrateInput, Session, WorkItem};
+use super::{app_state, locale, prepare_items, process_item, MigrateInput, Session, WorkItem};
 use serde::Serialize;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -136,17 +136,17 @@ impl Schedule {
     }
 
     fn claim(&mut self, id: usize) -> Result<Context, String> {
-        let row = self.rows.get_mut(id).ok_or("队列中没有这个项目")?;
+        let row = self.rows.get_mut(id).ok_or_else(|| locale::translate("队列中没有这个项目".into()))?;
         match row.phase {
-            Phase::Running => return Err("任务已在运行".into()),
-            Phase::Done => return Err("已成功或跳过的任务不能重试".into()),
+            Phase::Running => return Err(locale::translate("任务已在运行".into())),
+            Phase::Done => return Err(locale::translate("已成功或跳过的任务不能重试".into())),
             Phase::Queued | Phase::Failed => (),
         }
         if row.ctx.gate.paused.load(Ordering::Acquire) {
-            return Err("任务已暂停，请先继续".into());
+            return Err(locale::translate("任务已暂停，请先继续".into()));
         }
         if self.active >= self.limit {
-            return Err("已达到本批次并发上限".into());
+            return Err(locale::translate("已达到本批次并发上限".into()));
         }
         row.phase = Phase::Running;
         self.active += 1;
@@ -163,9 +163,9 @@ impl Schedule {
     }
 
     fn pause(&mut self, id: usize, paused: bool) -> Result<(), String> {
-        let row = self.rows.get(id).ok_or("队列中没有这个项目")?;
+        let row = self.rows.get(id).ok_or_else(|| locale::translate("队列中没有这个项目".into()))?;
         if row.phase == Phase::Done {
-            return Err("已完成的任务不能暂停或继续".into());
+            return Err(locale::translate("已完成的任务不能暂停或继续".into()));
         }
         row.ctx.gate.set(paused);
         Ok(())
@@ -197,12 +197,12 @@ struct Catalog {
 impl Catalog {
     fn lookup(&self, batch_id: &str) -> Result<&Arc<Batch>, String> {
         if self.preparing {
-            return Err("正在准备新批次".into());
+            return Err(locale::translate("正在准备新批次".into()));
         }
         self.batch
             .as_ref()
             .filter(|b| b.id == batch_id)
-            .ok_or_else(|| "无效或已过期的批次编号".into())
+            .ok_or_else(|| locale::translate("无效或已过期的批次编号".into()))
     }
 }
 
@@ -226,9 +226,9 @@ impl Registry {
                 .as_ref()
                 .is_some_and(|b| lock(&b.schedule).rows.iter().any(|r| !r.phase.terminal()))
         {
-            return Err("上一批次尚未结束".into());
+            return Err(locale::translate("上一批次尚未结束".into()));
         }
-        current.generation = current.generation.checked_add(1).ok_or("批次编号已用尽")?;
+        current.generation = current.generation.checked_add(1).ok_or_else(|| locale::translate("批次编号已用尽".into()))?;
         let id = current.generation.to_string();
         current.preparing = true;
         Ok(Preparation { registry: self, id })
@@ -286,7 +286,7 @@ impl Drop for Attempt {
 
 fn main_only<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     if window.label() != "main" {
-        return Err("仅主窗口可以操作任务队列".into());
+        return Err(locale::translate("仅主窗口可以操作任务队列".into()));
     }
     Ok(())
 }
@@ -298,15 +298,15 @@ fn validate(
     limit: usize,
 ) -> Result<(), String> {
     if !(1..=3).contains(&limit) {
-        return Err("并发任务数必须在 1 到 3 之间".into());
+        return Err(locale::translate("并发任务数必须在 1 到 3 之间".into()));
     }
     match mode {
         "local" if !names.is_empty() && input.project_ids.is_empty() => Ok(()),
         // Display names, when supplied, are not authority for migration: the
         // immutable WorkItems are resolved from the source session by project ID.
         "migration" if !input.project_ids.is_empty() && !input.workdir.trim().is_empty() => Ok(()),
-        "local" | "migration" => Err("任务模式与所选项目不一致".into()),
-        _ => Err("未知任务类型".into()),
+        "local" | "migration" => Err(locale::translate("任务模式与所选项目不一致".into())),
+        _ => Err(locale::translate("未知任务类型".into())),
     }
 }
 
@@ -324,9 +324,9 @@ pub(crate) async fn prepare_queue<R: Runtime>(
     async_runtime::spawn_blocking(move || {
         let state = app_state(&app);
         let prep = state.queue.prepare()?;
-        let (source, target, items) = prepare_items(&app, &mode, names, input)?;
+        let (source, target, items) = prepare_items(&app, &mode, names, input).map_err(locale::translate)?;
         if items.is_empty() {
-            return Err("没有可执行的项目".into());
+            return Err(locale::translate("没有可执行的项目".into()));
         }
         let prepared = Prepared {
             batch_id: prep.id.clone(),
@@ -354,7 +354,7 @@ pub(crate) async fn prepare_queue<R: Runtime>(
         Ok(prepared)
     })
     .await
-    .map_err(|_| "准备队列的后台任务异常退出".to_owned())?
+    .map_err(|_| locale::translate("准备队列的后台任务异常退出".to_owned()))?
 }
 
 #[tauri::command]
@@ -368,7 +368,7 @@ pub(crate) async fn run_queue_item<R: Runtime>(
     let attempt = app_state(&app).queue.claim(&batch_id, id)?;
     let result = async_runtime::spawn_blocking(move || attempt.run(&app)).await;
     Ok(result
-        .unwrap_or_else(|_| Outcome::failed("后台任务异常退出，请先核对目标站的导入结果".into())))
+        .unwrap_or_else(|_| Outcome::failed(locale::translate("后台任务异常退出，请先核对目标站的导入结果".into()))))
 }
 
 #[tauri::command]

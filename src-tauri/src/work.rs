@@ -1,4 +1,5 @@
 use super::*;
+use crate::locale;
 use std::collections::HashMap;
 
 pub(super) enum WorkItem {
@@ -79,23 +80,26 @@ pub(super) fn process_item<R: tauri::Runtime>(
     ctx: &queue::Context,
 ) -> Result<queue::Outcome, String> {
     let name = item.name();
-    let event = |message: String| TaskEvent {
+    let event = |message: String, stage: Option<&str>| TaskEvent {
         batch_id: ctx.batch_id.clone(),
         kind: "progress".into(),
         project: Some(name.to_owned()),
         index: Some(ctx.id + 1),
         total: Some(ctx.total),
-        message,
+        message: locale::translate(message),
         status: None,
         path: None,
+        stage: stage.map(str::to_owned),
     };
-    let stage = |message: &str| emit_event(app, event(message.to_owned()));
+    let stage = |stage_name: &str, message: &str| {
+        emit_event(app, event(message.to_owned(), Some(stage_name)))
+    };
     ctx.checkpoint();
     let path = match item {
         WorkItem::Local { path, .. } => {
-            let size = fs::metadata(path).map_err(|e| format!("无法读取 ZIP 属性：{e}"))?.len();
+            let size = fs::metadata(path).map_err(|e| locale::translate(format!("无法读取 ZIP 属性：{e}")))?.len();
             if size > MAX_ZIP_BYTES {
-                return Ok(queue::Outcome { status: "skipped".into(), message: "ZIP 超过 50 MB，已跳过".into(), path: Some(path.display().to_string()) });
+                return Ok(queue::Outcome { status: "skipped".into(), message: locale::translate("ZIP 超过 50 MB，已跳过".into()), path: Some(path.display().to_string()) });
             }
             path.clone()
         },
@@ -104,11 +108,11 @@ pub(super) fn process_item<R: tauri::Runtime>(
             root,
             ready_zip,
         } => {
-            let saved = ready_zip.lock().map_err(|_| "ZIP 状态不可用")?.clone();
+            let saved = ready_zip.lock().map_err(|_| locale::translate("ZIP 状态不可用".into()))?.clone();
             if let Some(path) = saved.filter(|p| p.is_file()) {
                 path
             } else {
-                stage("正在下载 ZIP");
+                stage("download", "正在下载 ZIP");
                 // Reserve a unique directory atomically, including for same-name concurrent exports.
                 let export = tempfile::Builder::new()
                     .prefix("export-")
@@ -117,36 +121,36 @@ pub(super) fn process_item<R: tauri::Runtime>(
                 let path = export
                     .path()
                     .join(format!("{}.zip", handoff::safe_filename(name)));
-                let size = download_zip(app, source.ok_or("缺少来源会话")?, project, &path, ctx)?;
+                let size = download_zip(app, source.ok_or_else(|| locale::translate("缺少来源会话".into()))?, project, &path, ctx)?;
                 let _ = export.keep();
                 if size > MAX_ZIP_BYTES {
                     static HANDOFF_LOCK: Mutex<()> = Mutex::new(());
-                    let _guard = HANDOFF_LOCK.lock().map_err(|_| "待处理目录不可用")?;
+                    let _guard = HANDOFF_LOCK.lock().map_err(|_| locale::translate("待处理目录不可用".into()))?;
                     let dest = handoff::save_for_manual_recovery(root, name, &path, "ZIP 超过 50 MB")?;
                     return Ok(queue::Outcome {
                         status: "skipped".into(),
-                        message: format!("ZIP 超过 50 MB，已跳过；保存于 {}", dest.display()),
+                        message: locale::translate(format!("ZIP 超过 50 MB，已跳过；保存于 {}", dest.display())),
                         path: Some(dest.display().to_string()),
                     });
                 }
-                *ready_zip.lock().map_err(|_| "ZIP 状态不可用")? = Some(path.clone());
+                *ready_zip.lock().map_err(|_| locale::translate("ZIP 状态不可用".into()))? = Some(path.clone());
                 path
             }
         }
     };
     ctx.checkpoint();
-    stage("正在上传 ZIP");
+    stage("upload", "正在上传 ZIP");
     let result = upload_zip(
         app,
         target,
         &path,
         name,
-        event("ZIP 已读取，等待服务器确认导入".into()),
+        event("ZIP 已读取，等待服务器确认导入".into(), Some("upload")),
         ctx,
     );
     let (status, message) = match result {
-        Ok(()) => ("success", "已确认创建项目".to_owned()),
-        Err(e) => ("failed", e),
+        Ok(()) => ("success", locale::translate("已确认创建项目".into())),
+        Err(e) => ("failed", locale::translate(e)),
     };
     Ok(queue::Outcome {
         status: status.into(),

@@ -12,12 +12,13 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use zip::ZipArchive;
 
+mod locale;
 mod auth;
-mod retry;
 
 mod handoff;
 mod local_upload;
 mod queue;
+mod retry;
 mod work;
 use work::{prepare_items, process_item, WorkItem};
 
@@ -55,6 +56,7 @@ struct TaskEvent {
     message: String,
     status: Option<String>,
     path: Option<String>,
+    stage: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -126,7 +128,7 @@ async fn configure<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
     input: ConfigureInput,
 ) -> Result<(), String> {
-    auth::configure(&window, input).await
+    auth::configure(&window, input).await.map_err(locale::translate)
 }
 
 #[tauri::command]
@@ -134,7 +136,7 @@ async fn open_oauth<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
     side: String,
 ) -> Result<(), String> {
-    auth::open(&window, &side).await
+    auth::open(&window, &side).await.map_err(locale::translate)
 }
 
 #[tauri::command]
@@ -142,7 +144,14 @@ async fn auth_status<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
     side: String,
 ) -> Result<&'static str, String> {
-    auth::status(&window, &side).await
+    auth::status(&window, &side).await.map_err(locale::translate)
+}
+#[tauri::command]
+fn set_locale(locale: String) -> Result<String, String> {
+    let selected = locale::Locale::parse(&locale)
+        .ok_or_else(|| locale::translate("不支持的语言，仅支持 zh-CN 或 en".to_owned()))?;
+    locale::set(selected);
+    Ok(selected.code().to_owned())
 }
 
 fn csrf_from_html(body: &str) -> Option<String> {
@@ -218,7 +227,8 @@ async fn list_projects<R: tauri::Runtime>(
 ) -> Result<Vec<Project>, String> {
     tauri::async_runtime::spawn_blocking(move || Session::snapshot(&app, true)?.projects())
         .await
-        .map_err(|e| format!("读取项目任务失败：{e}"))?
+        .map_err(|e| locale::translate(format!("读取项目任务失败：{e}")))?
+        .map_err(locale::translate)
 }
 
 struct Session {
@@ -625,14 +635,15 @@ mod upload_tests {
     }
 }
 
-fn emit_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: TaskEvent) {
+fn emit_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, mut event: TaskEvent) {
+    event.message = locale::translate(event.message);
     let _ = app.emit_to("main", "migration-event", event);
 }
 
 #[tauri::command]
 async fn pick_workdir() -> Result<Option<String>, String> {
     Ok(rfd::AsyncFileDialog::new()
-        .set_title("选择 ZIP 工作目录")
+        .set_title(&locale::translate("选择 ZIP 工作目录".into()))
         .pick_folder()
         .await
         .map(|handle| handle.path().to_string_lossy().to_string()))
@@ -655,7 +666,8 @@ pub fn run() {
             queue::pause_queue_item,
             queue::run_queue_item,
             local_upload::pick_local_zip,
-            pick_workdir
+            pick_workdir,
+            set_locale
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

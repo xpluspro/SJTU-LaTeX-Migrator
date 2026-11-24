@@ -1,4 +1,4 @@
-use super::{client, AppState, ConfigureInput};
+use super::{client, locale, AppState, ConfigureInput};
 use regex::Regex;
 use std::io::Read;
 use std::sync::{LazyLock, Mutex, MutexGuard};
@@ -35,12 +35,12 @@ impl SiteAuth {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, String> {
-    mutex.lock().map_err(|_| "登录状态锁失败".into())
+    mutex.lock().map_err(|_| locale::translate("登录状态锁失败".into()))
 }
 
 fn main_only<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     if window.label() != "main" {
-        return Err("仅主窗口可以操作登录会话".into());
+        return Err(locale::translate("仅主窗口可以操作登录会话".into()));
     }
     Ok(())
 }
@@ -49,7 +49,7 @@ fn site<'a>(state: &'a AppState, side: &str) -> Result<(&'a SiteAuth, &'a Mutex<
     match side {
         "source" => Ok((&state.source_auth, &state.source_url)),
         "target" => Ok((&state.target_auth, &state.target_url)),
-        _ => Err("未知登录目标".into()),
+        _ => Err(locale::translate("未知登录目标".into())),
     }
 }
 
@@ -71,14 +71,14 @@ fn normalize_url(value: &str) -> Result<String, String> {
         || value.contains('\\')
         || value.chars().any(char::is_control)
     {
-        return Err("请输入有效的系统地址".into());
+        return Err(locale::translate("请输入有效的系统地址".into()));
     }
     let url = if value.contains("://") {
         Url::parse(value)
     } else {
         Url::parse(&format!("https://{value}"))
     }
-    .map_err(|_| "系统地址无效")?;
+    .map_err(|_| locale::translate("系统地址无效".into()))?;
     if !allowed_url(&url)
         || url.host().is_none()
         || !url.username().is_empty()
@@ -86,9 +86,9 @@ fn normalize_url(value: &str) -> Result<String, String> {
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err(
+        return Err(locale::translate(
             "请使用 HTTPS 系统地址，不要包含凭据、查询参数或片段（本机测试可用 HTTP）".into(),
-        );
+        ));
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
@@ -118,7 +118,7 @@ pub(super) async fn configure<R: Runtime>(
     };
     for label in retired.into_iter().flatten() {
         if let Some(popup) = window.get_webview_window(&label) {
-            popup.destroy().map_err(|_| "无法关闭旧登录窗口")?;
+            popup.destroy().map_err(|_| locale::translate("无法关闭旧登录窗口".into()))?;
         }
     }
     Ok(())
@@ -134,12 +134,12 @@ pub(super) async fn open<R: Runtime>(window: &WebviewWindow<R>, side: &str) -> R
         .and_then(|label| window.get_webview_window(label))
     {
         if lock(&auth.cookie)?.is_some() {
-            existing.destroy().map_err(|_| "无法关闭已完成的登录窗口")?;
+            existing.destroy().map_err(|_| locale::translate("无法关闭已完成的登录窗口".into()))?;
         } else {
             existing
                 .show()
                 .and_then(|_| existing.set_focus())
-                .map_err(|_| "无法显示登录窗口")?;
+                .map_err(|_| locale::translate("无法显示登录窗口".into()))?;
             return Ok(());
         }
     }
@@ -148,20 +148,20 @@ pub(super) async fn open<R: Runtime>(window: &WebviewWindow<R>, side: &str) -> R
     } else {
         ("/oidc/login", "新系统 OAuth 登录")
     };
-    let login = Url::parse(&format!("{}{path}", *lock(address)?)).map_err(|_| "登录地址无效")?;
+    let login = Url::parse(&format!("{}{path}", *lock(address)?)).map_err(|_| locale::translate("登录地址无效".into()))?;
     // Never recycle a label: a delayed close must not destroy a subsequent attempt.
     static NEXT_POPUP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let n = NEXT_POPUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let label = format!("oauth-{side}-{n}");
     WebviewWindowBuilder::new(window.app_handle(), &label, WebviewUrl::External(login))
-        .title(title)
+        .title(locale::translate(title.to_owned()))
         .inner_size(1080.0, 760.0)
         .resizable(true)
         .center()
         .incognito(true)
         .on_navigation(allowed_url)
         .build()
-        .map_err(|_| "无法打开 OAuth 登录窗口")?;
+        .map_err(|_| locale::translate("无法打开 OAuth 登录窗口".into()))?;
     *lock(&auth.cookie)? = None;
     *active = Some(label);
     Ok(())
@@ -193,7 +193,7 @@ fn cookie_for_dashboard<R: Runtime>(popup: &WebviewWindow<R>, url: &Url) -> Resu
     // Use the configured project URL, never the current/IdP URL or global cookie store.
     let cookies = popup
         .cookies_for_url(url.clone())
-        .map_err(|_| "无法读取登录窗口会话")?;
+        .map_err(|_| locale::translate("无法读取登录窗口会话".into()))?;
     let mut header = String::new();
     for cookie in &cookies {
         if !matches_project_scope(cookie, url) {
@@ -239,7 +239,7 @@ fn probe<R: Runtime>(popup: &WebviewWindow<R>, dashboard: &Url) -> Result<Option
         .get(dashboard.clone()) // canonical path, no callback query, no redirects
         .timeout(Duration::from_secs(10))
         .send()
-        .map_err(|_| "无法验证项目首页，请重新尝试登录")?;
+        .map_err(|_| locale::translate("无法验证项目首页，请重新尝试登录".into()))?;
     if response.status() != reqwest::StatusCode::OK || !at_dashboard(response.url(), dashboard) {
         return Ok(None);
     }
@@ -248,9 +248,9 @@ fn probe<R: Runtime>(popup: &WebviewWindow<R>, dashboard: &Url) -> Result<Option
     response
         .take(LIMIT + 1)
         .read_to_string(&mut body)
-        .map_err(|_| "无法读取项目首页")?;
+        .map_err(|_| locale::translate("无法读取项目首页".into()))?;
     if body.len() as u64 > LIMIT {
-        return Err("项目首页过大，无法验证登录".into());
+        return Err(locale::translate("项目首页过大，无法验证登录".into()));
     }
     Ok((authenticated_dashboard(&body) && returned()).then_some(cookie))
 }
@@ -285,11 +285,11 @@ pub(super) async fn status<R: Runtime>(
         return Ok("closed");
     };
     let dashboard =
-        Url::parse(&format!("{}/project", *lock(address)?)).map_err(|_| "项目地址无效")?;
+        Url::parse(&format!("{}/project", *lock(address)?)).map_err(|_| locale::translate("项目地址无效".into()))?;
     let candidate = popup.clone();
     let result = async_runtime::spawn_blocking(move || probe(&candidate, &dashboard))
         .await
-        .map_err(|_| "登录验证任务失败")?;
+        .map_err(|_| locale::translate("登录验证任务失败".into()))?;
     if window.get_webview_window(popup.label()).is_none() {
         *active = None;
         return Ok("closed");

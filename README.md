@@ -21,6 +21,8 @@
 
 ## 流程
 
+界面支持简体中文和 English，可在右上角切换；首次启动跟随系统语言，之后记住所选语言。登录页面由各站点提供，其语言不受此设置控制。
+
 1. 在应用内点击“打开 OAuth 登录”，分别打开：
    - 老系统 OAuth：`https://latex.sjtu.edu.cn/jaccountlogin`
    - 新系统 OAuth：`https://latexpro.sjtu.edu.cn/oidc/login`
