@@ -1,6 +1,23 @@
 # SJTU LaTeX Migrator
 
-基于 **Tauri 2 + Rust** 的本地桌面迁移工具。不是 Tkinter，也不依赖 Playwright、Chrome Relay 或系统 Chrome Cookie。
+将 SJTU LaTeX 老系统中的项目迁移到 LaTeX Pro 的桌面工具。支持选择项目、逐项下载并上传，以及处理超过 50 MB 的项目。
+
+## 下载与安装
+
+打开 [最新版本下载页](https://github.com/xpluspro/SJTU-LaTeX-Migrator/releases/latest)，在页面下方 **Assets** 中选择适合自己电脑的文件：
+
+| 电脑系统 | 下载文件 | 使用方法 |
+| --- | --- | --- |
+| macOS（Apple 芯片 M1/M2/M3 等） | 文件名包含 `macOS-Apple-Silicon`，后缀 `.dmg` | 打开 DMG，将应用拖入“应用程序”文件夹。 |
+| Windows 10/11（64 位，Intel/AMD） | 文件名包含 `Windows-x64`，后缀 `.exe` | 双击安装程序并按提示安装。 |
+| Ubuntu / Debian（64 位） | 文件名包含 `Linux-x64`，后缀 `.deb` | 使用系统软件安装器打开，或运行 `sudo apt install ./文件名.deb`。 |
+| 其他 Linux（64 位） | 文件名包含 `Linux-x64`，后缀 `.AppImage` | 添加执行权限后运行：`chmod +x 文件名.AppImage`。 |
+
+目前不提供 Intel 芯片 Mac、Windows ARM 或 Linux ARM 安装包。`SHA256SUMS` 是校验文件，不是安装包；Source code 是源代码，也不需要下载安装。
+
+安装包未签名，macOS 版本也未公证，首次打开可能出现系统安全提示。请只从本仓库的 Releases 页面下载。
+
+对于已发布的 [v0.2.1](https://github.com/xpluspro/SJTU-LaTeX-Migrator/releases/tag/v0.2.1)，文件名尚未包含系统名称：`.dmg` 是 Apple 芯片 Mac，`x64-setup.exe` 是 Windows，`.deb` 和 `.AppImage` 是 Linux。
 
 ## 流程
 
@@ -18,7 +35,6 @@
 任务结束后可点击“全部清除”移除当前进度、日志和提示词；不会删除 ZIP 或其他文件。清除后不能从原队列直接重试，可重新选择保留的 ZIP 补传。任务运行期间不能清除。
 
 
-默认服务地址写在 `src-tauri/src/lib.rs` 的常量中，同时 UI 允许修改；后续换站点可以直接改默认值并发布新版本。
 
 ### 断线与手动处理
 
@@ -52,11 +68,6 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 构建产物位于 `src-tauri/target/release/bundle/`。
 
-## 自动发布
-
-将 `src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本改为一致，提交后推送对应标签（例如 `v0.2.0`）。GitHub Actions 会在 macOS、Windows 和 Linux 原生 runner 上构建，并在全部成功后发布 Release，附带 DMG、NSIS、AppImage、deb 和 SHA-256 校验文件。安装包目前未签名；macOS 未公证，系统可能提示安全警告。
-
-也可在 Actions 中手动运行 Release 工作流：选择分支时只构建并保存 Actions 工件，不创建 Release；选择版本标签时会创建 Release。发布需要仓库 Actions 允许 `GITHUB_TOKEN` 写入内容。
 
 ## 接口说明
 
