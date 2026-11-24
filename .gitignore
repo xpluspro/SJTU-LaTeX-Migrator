@@ -1,0 +1,28 @@
+# Rust / Tauri build output
+**/target/
+
+# Node and local tooling
+node_modules/
+__pycache__/
+*.py[cod]
+
+# Local LaTeX workspaces and generated documents
+ASC26_compile/
+ASC26_work/
+Shanghai_compile/
+Shanghai_compile_final/
+Shanghai_work/
+png8/
+testconv/
+testpng/
+test_map*.jpg
+
+# Local environment files
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# IDE / OS files
+.vscode/
+.idea/
