@@ -57,11 +57,14 @@ jobs:
       matrix:
         include:
           - platform: macos-aarch64
-            os: macos-14
+            os: macos-15
+            bundles: dmg
           - platform: windows-x64
             os: windows-latest
+            bundles: nsis
           - platform: linux-x64
             os: ubuntu-24.04
+            bundles: appimage,deb
 
     steps:
       - name: Check out source
@@ -89,20 +92,10 @@ jobs:
         shell: bash
         run: cargo install tauri-cli --version '^2' --locked
 
-      - name: Build macOS bundle
-        if: runner.os == 'macOS'
+      - name: Build ${{ matrix.platform }} bundles
         working-directory: src-tauri
-        run: cargo tauri build --bundles dmg
-
-      - name: Build Windows bundle
-        if: runner.os == 'Windows'
-        working-directory: src-tauri
-        run: cargo tauri build --bundles nsis
-
-      - name: Build Linux bundles
-        if: runner.os == 'Linux'
-        working-directory: src-tauri
-        run: cargo tauri build --bundles appimage,deb
+        shell: bash
+        run: cargo tauri build --bundles "${{ matrix.bundles }}"
 
       - name: Collect release artifacts
         shell: bash

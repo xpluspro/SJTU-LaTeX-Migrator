@@ -1,6 +1,6 @@
 [package]
 name = "sjtu-latex-migrator"
-version = "0.2.0"
+version = "0.2.1"
 description = "Migrate SJTU LaTeX projects between Overleaf-compatible services"
 authors = ["SJTU LaTeX Migrator"]
 edition = "2021"
