@@ -52,6 +52,12 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 构建产物位于 `src-tauri/target/release/bundle/`。
 
+## 自动发布
+
+将 `src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本改为一致，提交后推送对应标签（例如 `v0.2.0`）。GitHub Actions 会在 macOS、Windows 和 Linux 原生 runner 上构建，并在全部成功后发布 Release，附带 DMG、NSIS、AppImage、deb 和 SHA-256 校验文件。安装包目前未签名；macOS 未公证，系统可能提示安全警告。
+
+也可在 Actions 中手动运行 Release 工作流：选择分支时只构建并保存 Actions 工件，不创建 Release；选择版本标签时会创建 Release。发布需要仓库 Actions 允许 `GITHUB_TOKEN` 写入内容。
+
 ## 接口说明
 
 Rust 后端使用登录 Webview 的 Cookie 创建 `reqwest` 会话：

@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Check release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check application version
+        id: version
+        shell: bash
+        run: |
+          cargo_version=$(awk -F'"' '/^version = / { print $2; exit }' src-tauri/Cargo.toml)
+          tauri_version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          test "$cargo_version" = "$tauri_version" || {
+            echo "Cargo.toml and tauri.conf.json versions differ" >&2
+            exit 1
+          }
+
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            test "$tag_version" = "$cargo_version" || {
+              echo "Tag must be v$cargo_version" >&2
+              exit 1
+            }
+            echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${cargo_version}-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            os: macos-14
+          - platform: windows-x64
+            os: windows-latest
+          - platform: linux-x64
+            os: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        shell: bash
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Build macOS bundle
+        if: runner.os == 'macOS'
+        working-directory: src-tauri
+        run: cargo tauri build --bundles dmg
+
+      - name: Build Windows bundle
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        run: cargo tauri build --bundles nsis
+
+      - name: Build Linux bundles
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: cargo tauri build --bundles appimage,deb
+
+      - name: Collect release artifacts
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+
+          case "$PLATFORM" in
+            macos-*)
+              find src-tauri/target/release/bundle/dmg -type f -name '*.dmg' -exec cp {} release-artifacts/ \;
+              ;;
+            windows-*)
+              find src-tauri/target/release/bundle/nsis -type f -name '*.exe' -exec cp {} release-artifacts/ \;
+              ;;
+            linux-*)
+              find src-tauri/target/release/bundle -type f \( -name '*.AppImage' -o -name '*.deb' \) -exec cp {} release-artifacts/ \;
+              ;;
+          esac
+
+          test -n "$(find release-artifacts -type f -print -quit)"
+          ls -lh release-artifacts
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SJTU-LaTeX-Migrator_${{ needs.version.outputs.version }}_${{ matrix.platform }}
+          path: release-artifacts
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: [version, build]
+    if: github.ref_type == 'tag' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: SJTU-LaTeX-Migrator_${{ needs.version.outputs.version }}_*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create checksum manifest
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          find release-artifacts -type f -not -name '*.sha256' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > "release-artifacts/SHA256SUMS_${VERSION}.txt"
+          ls -lh release-artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "SJTU LaTeX Migrator ${VERSION}" \
+            --generate-notes \
+            release-artifacts/*
