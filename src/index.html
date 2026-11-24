@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SJTU LaTeX Migrator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">↗</span><span><b>SJTU</b> LaTeX Migrator</span></div>
+        <div class="topbar-note"><span class="pulse"></span>本地运行 · Cookie 不离开设备</div>
+      </header>
+
+      <section class="hero">
+        <div>
+          <p class="eyebrow">PROJECT TRANSFER</p>
+          <h1>把项目搬到<br /><em>LaTeX Pro。</em></h1>
+          <p class="hero-copy">在内置 OAuth 窗口完成两次登录，选择项目后逐个导出、检查并导入。不会批量压垮服务，也不会读取系统浏览器。</p>
+        </div>
+        <div class="hero-badge"><span class="badge-icon">◎</span><span><strong>50 MB</strong><small>单个 ZIP 上传上限</small></span></div>
+      </section>
+
+      <section class="panel connection-panel">
+        <div class="section-heading"><div><span class="step">01</span><h2>连接两个系统</h2></div><span class="section-caption">地址可修改，默认值已预填</span></div>
+        <div class="connection-grid">
+          <div class="connection-card source-card">
+            <div class="card-label"><span class="dot dot-source"></span>老系统 · 导出来源</div>
+            <label class="field-label" for="source-url">服务地址</label>
+            <input id="source-url" value="latex.sjtu.edu.cn" spellcheck="false" />
+            <div class="card-actions"><button class="button button-dark" id="source-login">打开 OAuth 登录 <span>↗</span></button></div>
+            <div class="auth-state" id="source-state"><span class="state-icon">1</span>尚未连接</div>
+          </div>
+          <div class="connector"><span>→</span></div>
+          <div class="connection-card target-card">
+            <div class="card-label"><span class="dot dot-target"></span>新系统 · 导入目标</div>
+            <label class="field-label" for="target-url">服务地址</label>
+            <input id="target-url" value="latexpro.sjtu.edu.cn" spellcheck="false" />
+            <div class="card-actions"><button class="button button-dark" id="target-login">打开 OAuth 登录 <span>↗</span></button></div>
+            <div class="auth-state" id="target-state"><span class="state-icon">2</span>尚未连接</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel projects-panel">
+        <div class="section-heading"><div><span class="step">02</span><h2>选择要迁移的项目</h2></div><button class="button button-outline" id="load-projects" disabled>读取项目列表 <span>↻</span></button></div>
+        <div class="project-toolbar"><span id="project-count">完成登录后读取项目</span><div><button class="text-button" id="select-all">全选</button><button class="text-button" id="select-none">清空</button></div></div>
+        <div class="project-list" id="project-list"><div class="empty-state"><div class="empty-icon">⌁</div><strong>项目列表尚未加载</strong><span>老系统登录成功后，点击「读取项目列表」。</span></div></div>
+      </section>
+
+      <section class="panel action-panel">
+        <div class="workdir-row"><div><label class="field-label" for="workdir">ZIP 工作目录</label><div class="workdir-input"><input id="workdir" value="~/latex-migration" spellcheck="false" /><button class="button button-ghost" id="pick-workdir">选择目录</button></div></div><div class="policy-note"><span>▱</span><span>下载 → 检查大小 → 上传<br /><small>超限 ZIP 跳过并保留在「待处理」</small></span></div></div>
+        <div class="run-row"><div class="run-status"><span class="status-light" id="run-light"></span><span id="run-status">准备就绪</span></div><div class="run-actions"><label for="queue-limit">并发数</label><select id="queue-limit" aria-label="同时处理数量"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select><button class="button button-primary" id="start-migration" disabled>开始迁移 <span>→</span></button></div></div>
+        <div class="local-import">
+          <h2>批量补传 ZIP</h2>
+          <p>只需登录新系统。一次选择多个处理好的 ZIP，每个不超过 50 MB（50,000,000 字节）。若上次上传断线，请先核对新系统，避免重复创建。</p>
+          <button class="button button-outline" id="pick-zip">选择 ZIP 文件（可多选）</button>
+          <span id="local-file" aria-live="polite">尚未选择</span>
+          <fieldset id="local-queue" aria-label="补传队列"></fieldset>
+          <button class="button button-primary" id="upload-local" disabled>开始批量补传</button>
+        </div>
+        <div id="progress-panel" class="progress-panel" hidden>
+          <div class="meter-title"><label for="batch-progress">整体进度</label><span id="batch-count"></span></div>
+          <progress id="batch-progress" max="1" value="0"></progress>
+          <div class="queue-controls"><button class="text-button" id="pause-all">全部暂停</button><button class="text-button" id="clear-history" disabled>全部清除</button><button class="text-button" id="continue-all">全部继续</button><button class="text-button" id="retry-failed">重试失败项目</button></div>
+          <div id="queue-list" class="queue-list" aria-live="polite"></div>
+          <div id="current-stage" hidden><div class="meter-title"><label for="file-progress" id="phase-name">准备迁移</label><span id="file-count"></span></div>
+            <progress id="file-progress"></progress>
+          </div>
+          <section id="oversize-guidance" class="oversize-guidance" hidden>
+            <h3>超限项目需要处理</h3>
+            <p>以下项目已跳过。将这段提示词复制给你的 Agent，处理后使用「批量补传 ZIP」。</p>
+            <textarea id="agent-prompt" aria-label="复制给 Agent 的提示词" rows="8" readonly></textarea>
+          </section>
+        </div>
+        <dialog id="confirm-dialog"><form method="dialog"><p id="confirm-message"></p><div class="dialog-actions"><button class="button button-ghost" id="confirm-cancel" value="cancel">取消</button><button class="button button-primary" id="confirm-ok" value="default">继续</button></div></form></dialog>
+      </section>
+
+      <section class="panel log-panel"><div class="section-heading compact"><h2>迁移记录</h2><span id="log-summary">等待任务</span></div><div class="log-list" id="log-list"><div class="log-line muted">日志会显示下载和上传的实时状态。</div></div></section>
+      <footer><span>安全提示：登录窗口仅用于对应域名，Cookie 只保存在本次应用进程内。</span><span>v0.2 · Tauri + Rust</span></footer>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
