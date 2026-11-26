@@ -20,13 +20,13 @@
         <div>
           <p class="eyebrow" data-i18n="eyebrow">PROJECT TRANSFER</p>
           <h1><span data-i18n="heroTitle">把项目搬到</span><br /><em data-i18n="titleProduct">LaTeX Pro。</em></h1>
-          <p class="hero-copy" data-i18n="heroCopy">在内置 OAuth 窗口完成两次登录，选择项目后逐个导出、检查并导入。不会批量压垮服务，也不会读取系统浏览器。</p>
+          <p class="hero-copy" data-i18n="heroCopy">登录老系统后可下载项目 ZIP；迁移还需登录新系统，再导出、检查并导入。登录通过内置 OAuth 窗口完成，不会读取系统浏览器。</p>
         </div>
         <div class="hero-badge"><span class="badge-icon">◎</span><span><strong>50 MB</strong><small data-i18n="zipLimitSingle">单个 ZIP 上传上限</small></span></div>
       </section>
 
       <section class="panel connection-panel">
-        <div class="section-heading"><div><span class="step">01</span><h2 data-i18n="connectSystems">连接两个系统</h2></div><span class="section-caption" data-i18n="addressPrefilled">地址可修改，默认值已预填</span></div>
+        <div class="section-heading"><div><span class="step">01</span><h2 data-i18n="connectSystems">连接系统</h2></div><span class="section-caption" data-i18n="addressPrefilled">地址可修改，默认值已预填</span></div>
         <div class="connection-grid">
           <div class="connection-card source-card">
             <div class="card-label"><span class="dot dot-source"></span><span data-i18n="sourceLabel">老系统 · 导出来源</span></div>
@@ -47,14 +47,15 @@
       </section>
 
       <section class="panel projects-panel">
-        <div class="section-heading"><div><span class="step">02</span><h2 data-i18n="selectProjects">选择要迁移的项目</h2></div><button class="button button-outline" id="load-projects" disabled><span data-i18n="loadProjects">读取项目列表</span> <span>↻</span></button></div>
+        <div class="section-heading"><div><span class="step">02</span><h2 data-i18n="selectProjects">选择要迁移或下载的项目</h2></div><button class="button button-outline" id="load-projects" disabled><span data-i18n="loadProjects">读取项目列表</span> <span>↻</span></button></div>
         <div class="project-toolbar"><span id="project-count">完成登录后读取项目</span><div><button class="text-button" id="select-all" data-i18n="selectAll">全选</button><button class="text-button" id="select-none" data-i18n="selectNone">清空</button></div></div>
         <div class="project-list" id="project-list"><div class="empty-state"><div class="empty-icon">⌁</div><strong data-i18n="projectsNotLoaded">项目列表尚未加载</strong><span data-i18n="projectsHint">老系统登录成功后，点击「读取项目列表」。</span></div></div>
       </section>
 
       <section class="panel action-panel">
         <div class="workdir-row"><div><label class="field-label" for="workdir" data-i18n="zipWorkdir">ZIP 工作目录</label><div class="workdir-input"><input id="workdir" value="~/latex-migration" spellcheck="false" /><button class="button button-ghost" id="pick-workdir" data-i18n="chooseDirectory">选择目录</button></div></div><div class="policy-note"><span>▱</span><span><span data-i18n="downloadCheckUpload">下载 → 检查大小 → 上传</span><br /><small data-i18n="oversizePending">超限 ZIP 跳过并保留在「待处理」</small></span></div></div>
-        <div class="run-row"><div class="run-status"><span class="status-light" id="run-light"></span><span id="run-status">准备就绪</span></div><div class="run-actions"><label for="queue-limit" data-i18n="concurrency">并发数</label><select id="queue-limit" aria-label="同时处理数量" data-i18n-aria="queueCount"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select><button class="button button-primary" id="start-migration" disabled><span data-i18n="startMigration">开始迁移</span> <span>→</span></button></div></div>
+        <div class="run-row"><div class="run-status"><span class="status-light" id="run-light"></span><span id="run-status">准备就绪</span></div><div class="run-actions"><label for="queue-limit" data-i18n="concurrency">并发数</label><select id="queue-limit" aria-label="同时处理数量" data-i18n-aria="queueCount"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select><button class="button button-outline" id="start-download" disabled data-i18n="startDownload">仅下载 ZIP</button><button class="button button-primary" id="start-migration" disabled><span data-i18n="startMigration">开始迁移</span> <span>→</span></button></div></div>
+        <p class="download-hint" data-i18n="downloadHint">仅下载只需登录老系统，ZIP 保存在工作目录，不受上传大小限制。</p>
         <div class="local-import">
           <h2 data-i18n="batchUpload">批量补传 ZIP</h2>
           <p data-i18n="batchUploadDescription">只需登录新系统。一次选择多个处理好的 ZIP，每个不超过 50 MB（50,000,000 字节）。若上次上传断线，请先核对新系统，避免重复创建。</p>
@@ -66,7 +67,7 @@
         <div id="progress-panel" class="progress-panel" hidden>
           <div class="meter-title"><label for="batch-progress" data-i18n="overallProgress">整体进度</label><span id="batch-count"></span></div>
           <progress id="batch-progress" max="1" value="0"></progress>
-          <div class="queue-controls"><button class="text-button" id="pause-all" data-i18n="pauseAll">全部暂停</button><button class="text-button" id="clear-history" disabled data-i18n="clearAll">全部清除</button><button class="text-button" id="continue-all" data-i18n="continueAll">全部继续</button><button class="text-button" id="retry-failed" data-i18n="retryFailed">重试失败项目</button></div>
+          <div class="queue-controls"><button class="text-button" id="pause-all" data-i18n="pauseAll">全部暂停</button><button class="text-button" id="clear-history" disabled data-i18n="clearHistory">清除记录（不删除文件）</button><button class="text-button" id="continue-all" data-i18n="continueAll">全部继续</button><button class="text-button" id="retry-failed" data-i18n="retryFailed">重试失败项目</button></div>
           <div id="queue-list" class="queue-list" aria-live="polite"></div>
           <div id="current-stage" hidden><div class="meter-title"><label for="file-progress" id="phase-name">准备迁移</label><span id="file-count"></span></div>
             <progress id="file-progress"></progress>

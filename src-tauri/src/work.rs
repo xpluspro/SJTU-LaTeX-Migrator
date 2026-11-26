@@ -11,6 +11,7 @@ pub(super) enum WorkItem {
         project: Project,
         root: PathBuf,
         ready_zip: Mutex<Option<PathBuf>>,
+        download_only: bool,
     },
 }
 impl WorkItem {
@@ -27,17 +28,22 @@ pub(super) fn prepare_items<R: tauri::Runtime>(
     mode: &str,
     names: Vec<String>,
     input: MigrateInput,
-) -> Result<(Option<Session>, Session, Vec<WorkItem>), String> {
-    let target = Session::snapshot(app, false)?;
+) -> Result<(Option<Session>, Option<Session>, Vec<WorkItem>), String> {
     match mode {
         "local" => {
+            let target = Session::snapshot(app, false)?;
             let items = local_upload::prepare_local(app, names)?
                 .into_iter()
                 .map(|(path, name)| WorkItem::Local { path, name })
                 .collect();
-            Ok((None, target, items))
+            Ok((None, Some(target), items))
         }
-        "migration" => {
+        "migration" | "download" => {
+            let target = if mode == "migration" {
+                Some(Session::snapshot(app, false)?)
+            } else {
+                None
+            };
             let source = Session::snapshot(app, true)?;
             let mut projects: HashMap<_, _> = source
                 .projects()?
@@ -63,6 +69,7 @@ pub(super) fn prepare_items<R: tauri::Runtime>(
                         project,
                         root: root.clone(),
                         ready_zip: Mutex::default(),
+                        download_only: mode == "download",
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
@@ -75,7 +82,7 @@ pub(super) fn prepare_items<R: tauri::Runtime>(
 pub(super) fn process_item<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     source: Option<&Session>,
-    target: &Session,
+    target: Option<&Session>,
     item: &WorkItem,
     ctx: &queue::Context,
 ) -> Result<queue::Outcome, String> {
@@ -107,6 +114,7 @@ pub(super) fn process_item<R: tauri::Runtime>(
             project,
             root,
             ready_zip,
+            download_only,
         } => {
             let saved = ready_zip.lock().map_err(|_| locale::translate("ZIP 状态不可用".into()))?.clone();
             if let Some(path) = saved.filter(|p| p.is_file()) {
@@ -123,7 +131,7 @@ pub(super) fn process_item<R: tauri::Runtime>(
                     .join(format!("{}.zip", handoff::safe_filename(name)));
                 let size = download_zip(app, source.ok_or_else(|| locale::translate("缺少来源会话".into()))?, project, &path, ctx)?;
                 let _ = export.keep();
-                if size > MAX_ZIP_BYTES {
+                if !*download_only && size > MAX_ZIP_BYTES {
                     static HANDOFF_LOCK: Mutex<()> = Mutex::new(());
                     let _guard = HANDOFF_LOCK.lock().map_err(|_| locale::translate("待处理目录不可用".into()))?;
                     let dest = handoff::save_for_manual_recovery(root, name, &path, "ZIP 超过 50 MB")?;
@@ -138,11 +146,19 @@ pub(super) fn process_item<R: tauri::Runtime>(
             }
         }
     };
+    if matches!(item, WorkItem::Migration { download_only: true, .. }) {
+        ctx.checkpoint();
+        return Ok(queue::Outcome {
+            status: "success".into(),
+            message: locale::translate(format!("下载成功；保存于 {}", path.display())),
+            path: Some(path.display().to_string()),
+        });
+    }
     ctx.checkpoint();
     stage("upload", "正在上传 ZIP");
     let result = upload_zip(
         app,
-        target,
+        target.ok_or_else(|| locale::translate("缺少目标会话".into()))?,
         &path,
         name,
         event("ZIP 已读取，等待服务器确认导入".into(), Some("upload")),
@@ -158,3 +174,4 @@ pub(super) fn process_item<R: tauri::Runtime>(
         path: Some(path.display().to_string()),
     })
 }
+

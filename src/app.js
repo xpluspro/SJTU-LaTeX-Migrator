@@ -31,7 +31,7 @@ let localFileMessage = '尚未选择';
 en['尚未选择'] = 'None selected'; en['尚未连接'] = 'Not connected';
 const authMessages = {};
 let projectsLoaded = false;
-function updateProjectCount() { $('project-count').textContent = projectsLoaded ? bi(`${state.projects.length} 个可迁移项目`, `${state.projects.length} projects available`) : bi('完成登录后读取项目', 'Load projects after signing in'); }
+function updateProjectCount() { $('project-count').textContent = projectsLoaded ? bi(`${state.projects.length} 个可选项目`, `${state.projects.length} projects available`) : bi('完成登录后读取项目', 'Load projects after signing in'); }
 function renderLocalFiles() {
   const rows = localFiles.map((file, i) => { const row = document.createElement('label'); row.className = 'zip-row'; const source = document.createElement('span'); source.textContent = bi(`ZIP 文件 ${i + 1}`, `ZIP file ${i + 1}`); const input = document.createElement('input'); input.value = file.name; input.setAttribute('aria-label', bi(`第 ${i + 1} 个项目名称`, `Project ${i + 1} name`)); input.addEventListener('input', () => { file.name = input.value; updateReady(); }); const status = document.createElement('small'); status.textContent = `${(file.bytes / 1e6).toFixed(2)} MB · ${tr(file.bytes > 50_000_000 ? '超过上限' : '待处理')}`; row.append(source, input, status); return row; });
   $('local-queue').replaceChildren(...rows); if (localFiles.length) $('local-file').textContent = bi(`已选 ${localFiles.length} 个，可分别修改项目名称`, `${localFiles.length} selected; project names can be edited`);
@@ -61,6 +61,7 @@ function setAuth(side, ok, message) {
 function updateReady() {
   $('load-projects').disabled = !state.sourceCookie || state.busy || loading;
   $('start-migration').disabled = !state.sourceCookie || !state.targetCookie || loading || state.busy || !document.querySelector('.project-row input:checked');
+  $('start-download').disabled = !state.sourceCookie || loading || state.busy || !document.querySelector('.project-row input:checked') || !$('workdir').value.trim();
   $('pick-zip').disabled = state.busy || loading;
   $('upload-local').disabled = !state.targetCookie || !localFiles.length || localFiles.some(f => !f.name.trim()) || loading || state.busy;
   for (const side of sides) { $(`${side}-url`).disabled = state.busy || loading; $(`${side}-login`).disabled = state.busy || loading; }
@@ -128,8 +129,9 @@ function renderQueue(q) {
   q.items.forEach(item => {
     const row = [...list.children].find(candidate => Number(candidate.dataset.id) === item.id); if (!row) return;
     row.dataset.status = item.status; row.className = `queue-item queue-${item.status}`;
-    row.querySelector('.queue-detail').textContent = tr(item.message) || statusText(item); row.querySelector('.queue-status').textContent = statusText(item);
-    const meter = row.querySelector('.queue-meter'); const stage = item.focusStage || 'upload'; const total = item.totals?.[stage] || 0; const bytes = item.bytes?.[stage] || 0;
+    const detail = tr(item.message) || statusText(item);
+    row.querySelector('.queue-detail').textContent = q.mode === 'download' && item.status === 'success' && item.path && !detail.includes(item.path) ? `${detail} · ${bi('保存路径', 'Saved to')}: ${item.path}` : detail; row.querySelector('.queue-status').textContent = statusText(item);
+    const meter = row.querySelector('.queue-meter'); const stage = item.focusStage || (q.mode === 'download' ? 'download' : 'upload'); const total = item.totals?.[stage] || 0; const bytes = item.bytes?.[stage] || 0;
     if (item.status === 'skipped' || item.status === 'success') { meter.max = 1; meter.value = 1; } else if (total > 0) { meter.max = total; meter.value = bytes; } else if (item.status === 'queued' || item.status === 'failed' || item.status === 'paused') { meter.max = 1; meter.value = 0; } else meter.removeAttribute('value');
     const actions = row.querySelector('.queue-actions'); actions.replaceChildren();
     if (['queued', 'running', 'paused'].includes(item.status)) { const button = document.createElement('button'); button.className = 'text-button'; button.textContent = tr(item.status === 'paused' ? '继续' : '暂停'); button.addEventListener('click', () => toggleItemPause(item.id)); actions.appendChild(button); }
@@ -204,7 +206,7 @@ async function runQueueItem(q, item) {
   finally { q.active.delete(item.id); drainQueue(q); }
 }
 async function prepareQueue(mode, names, input) {
-  if (state.busy || (mode === 'local' && !names.length) || (mode === 'migration' && !input.projectIds?.length)) return;
+  if (state.busy || (mode === 'local' && !names.length) || (mode !== 'local' && !input.projectIds?.length)) return;
   const q = { mode, names, input, limit: Number($('queue-limit').value) || 2, batchId: null, items: [], active: new Set(), listeners: [], finished: false, done: null };
   $('oversize-guidance').hidden = true;
   currentQueue = q; state.busy = true; updateReady(); updateRunPanel(q); phase('正在准备任务…'); $('run-status').textContent = tr('正在准备'); q.done = new Promise(resolve => { q.resolve = resolve; });
@@ -236,7 +238,8 @@ async function setAllPaused(paused) {
 }
 async function retryItems(ids) {
   const q = currentQueue; if (!q) return; const items = q.items.filter(item => ids.includes(item.id) && item.status === 'failed'); if (!items.length) return;
-  if (!await confirmAction(items.length === 1 ? bi(`确定重试「${items[0].name}」吗？重复项目可能被再次创建。`, `Retry “${items[0].name}”? This may create a duplicate project.`) : bi(`确定重试这 ${items.length} 个失败项目吗？重复项目可能被再次创建。`, `Retry these ${items.length} failed projects? This may create duplicate projects.`))) return;
+  const confirmation = q.mode === 'download' ? (items.length === 1 ? bi(`确定重试下载「${items[0].name}」吗？`, `Retry downloading “${items[0].name}”?`) : bi(`确定重试下载这 ${items.length} 个失败项目吗？`, `Retry downloading these ${items.length} failed projects?`)) : (items.length === 1 ? bi(`确定重试「${items[0].name}」吗？重复项目可能被再次创建。`, `Retry “${items[0].name}”? This may create a duplicate project.`) : bi(`确定重试这 ${items.length} 个失败项目吗？重复项目可能被再次创建。`, `Retry these ${items.length} failed projects? This may create duplicate projects.`));
+  if (!await confirmAction(confirmation)) return;
   await Promise.all(items.map(async item => { if (item.pausePromise) await item.pausePromise; try { await invoke('pause_queue_item', { batchId: q.batchId, id: item.id, paused: false }); } catch (error) { addLog(String(error), 'failed'); } }));
   $('current-stage').hidden = false;
   $('oversize-guidance').hidden = true;
@@ -258,9 +261,9 @@ async function clearHistory() {
   $('run-status').textContent = tr('准备就绪');
   updateReady();
 }
-function migrate() {
+function startProjects(mode) {
   const selected = [...document.querySelectorAll('.project-row input:checked')];
-  return prepareQueue('migration', [], { projectIds: selected.map(input => input.value), workdir: $('workdir').value });
+  return prepareQueue(mode, [], { projectIds: selected.map(input => input.value), workdir: $('workdir').value });
 }
 async function pickZip() {
   try {
@@ -282,7 +285,7 @@ function confirmAction(message) {
 }
 $('source-login').addEventListener('click', () => openLogin('source')); $('target-login').addEventListener('click', () => openLogin('target'));
 for (const side of sides) { const field = $(`${side}-url`); field.value = sessionStorage.getItem(`${side}-url`) || field.value; field.addEventListener('input', () => { authEpoch[side]++; state[`${side}Cookie`] = false; if (side === 'source') { state.projects = []; projectsLoaded = false; renderProjects(); } sessionStorage.setItem(`${side}-url`, field.value); setAuth(side, false, '地址已更改，请连接此站点'); updateReady(); }); }
-$('load-projects').addEventListener('click', loadProjects); $('pick-workdir').addEventListener('click', async () => { try { const path = await invoke('pick_workdir'); if (path) $('workdir').value = path; } catch (error) { addLog(String(error), 'failed'); } }); $('start-migration').addEventListener('click', migrate); $('pick-zip').addEventListener('click', pickZip); $('upload-local').addEventListener('click', uploadLocal);
+$('load-projects').addEventListener('click', loadProjects); $('pick-workdir').addEventListener('click', async () => { try { const path = await invoke('pick_workdir'); if (path) { $('workdir').value = path; updateReady(); } } catch (error) { addLog(String(error), 'failed'); } }); $('workdir').addEventListener('input', updateReady); $('start-migration').addEventListener('click', () => startProjects('migration')); $('start-download').addEventListener('click', () => startProjects('download')); $('pick-zip').addEventListener('click', pickZip); $('upload-local').addEventListener('click', uploadLocal);
 $('select-all').addEventListener('click', () => { document.querySelectorAll('.project-row input').forEach(input => { input.checked = true; }); updateReady(); }); $('select-none').addEventListener('click', () => { document.querySelectorAll('.project-row input').forEach(input => { input.checked = false; }); updateReady(); });
 $('pause-all').addEventListener('click', () => setAllPaused(true)); $('continue-all').addEventListener('click', () => setAllPaused(false)); $('retry-failed').addEventListener('click', () => currentQueue && retryItems(currentQueue.items.filter(item => item.status === 'failed').map(item => item.id)));
 $('clear-history').addEventListener('click', clearHistory);

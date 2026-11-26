@@ -46,6 +46,9 @@ pub(crate) fn translate(text: String) -> String {
     if let Some(path) = text.strip_prefix("ZIP 超过 50 MB，已跳过；保存于 ") {
         return format!("ZIP exceeds 50 MB and was skipped; saved at {path}");
     }
+    if let Some(path) = text.strip_prefix("下载成功；保存于 ") {
+        return format!("Download complete; saved at {path}");
+    }
     let value = text;
     for (zh, en) in [
         ("登录状态锁失败", "Login state lock failed"),
@@ -117,6 +120,7 @@ pub(crate) fn translate(text: String) -> String {
         ("未知任务类型", "Unknown task type"),
         ("没有可执行的项目", "There are no executable projects"),
         ("后台任务异常退出，请先核对目标站的导入结果", "The background task exited unexpectedly; verify the import result on the target site first"),
+        ("后台任务异常退出，请重试", "The background task exited unexpectedly; retry the task"),
         ("所选项目已不可用，请刷新列表", "The selected project is unavailable; refresh the list"),
         ("ZIP 状态不可用", "ZIP state is unavailable"),
         ("缺少来源会话", "Source session is missing"),

@@ -175,7 +175,7 @@ impl Schedule {
 struct Batch {
     id: String,
     source: Option<Session>,
-    target: Session,
+    target: Option<Session>,
     items: Vec<WorkItem>,
     schedule: Mutex<Schedule>,
 }
@@ -265,16 +265,18 @@ struct Attempt {
 }
 
 impl Attempt {
-    fn run<R: Runtime>(self, app: &tauri::AppHandle<R>) -> Outcome {
+    fn run<R: Runtime>(mut self, app: &tauri::AppHandle<R>) -> Outcome {
         self.ctx.checkpoint();
-        process_item(
+        let outcome = process_item(
             app,
             self.batch.source.as_ref(),
-            &self.batch.target,
+            self.batch.target.as_ref(),
             &self.batch.items[self.ctx.id],
             &self.ctx,
         )
-        .unwrap_or_else(Outcome::failed)
+        .unwrap_or_else(Outcome::failed);
+        self.failed = outcome.status == "failed";
+        outcome
     }
 }
 
@@ -304,8 +306,8 @@ fn validate(
         "local" if !names.is_empty() && input.project_ids.is_empty() => Ok(()),
         // Display names, when supplied, are not authority for migration: the
         // immutable WorkItems are resolved from the source session by project ID.
-        "migration" if !input.project_ids.is_empty() && !input.workdir.trim().is_empty() => Ok(()),
-        "local" | "migration" => Err(locale::translate("任务模式与所选项目不一致".into())),
+        "migration" | "download" if !input.project_ids.is_empty() && !input.workdir.trim().is_empty() => Ok(()),
+        "local" | "migration" | "download" => Err(locale::translate("任务模式与所选项目不一致".into())),
         _ => Err(locale::translate("未知任务类型".into())),
     }
 }
@@ -366,9 +368,16 @@ pub(crate) async fn run_queue_item<R: Runtime>(
     main_only(&window)?;
     let app = window.app_handle().clone();
     let attempt = app_state(&app).queue.claim(&batch_id, id)?;
+    let download_only = attempt.batch.target.is_none();
     let result = async_runtime::spawn_blocking(move || attempt.run(&app)).await;
-    Ok(result
-        .unwrap_or_else(|_| Outcome::failed(locale::translate("后台任务异常退出，请先核对目标站的导入结果".into()))))
+    Ok(result.unwrap_or_else(|_| {
+        let message = if download_only {
+            "后台任务异常退出，请重试"
+        } else {
+            "后台任务异常退出，请先核对目标站的导入结果"
+        };
+        Outcome::failed(locale::translate(message.into()))
+    }))
 }
 
 #[tauri::command]
@@ -404,6 +413,19 @@ mod tests {
             );
         }
         assert!(validate("migration", &names, &input, 1).is_err());
+        assert!(validate("download", &names, &input, 1).is_err());
+        let selected = MigrateInput {
+            project_ids: vec!["id".into()],
+            workdir: "exports".into(),
+        };
+        assert!(validate("download", &[], &selected, 1).is_ok());
+        assert!(validate("migration", &[], &selected, 1).is_ok());
+        assert!(validate("download", &[], &selected, 0).is_err());
+        let missing_workdir = MigrateInput {
+            project_ids: vec!["id".into()],
+            workdir: "  ".into(),
+        };
+        assert!(validate("download", &[], &missing_workdir, 1).is_err());
         assert!(validate("unknown", &names, &input, 1).is_err());
     }
 
@@ -459,11 +481,11 @@ mod tests {
         let batch = Arc::new(Batch {
             id: id.clone(),
             source: None,
-            target: Session {
+            target: Some(Session {
                 base: "https://original.invalid".into(),
                 http: reqwest::blocking::Client::new(),
                 csrf: Mutex::default(),
-            },
+            }),
             items: vec![WorkItem::Local {
                 name: "name".into(),
                 path: "zip".into(),
