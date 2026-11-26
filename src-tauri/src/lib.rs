@@ -166,16 +166,19 @@ fn csrf_from_html(body: &str) -> Option<String> {
 }
 
 fn projects_from_html(body: &str) -> Result<Vec<Project>, String> {
-    let names = ["ol-prefetchedProjectsBlob", "ol-projects"];
-    for name in names {
-        let pattern = regex::Regex::new(&format!(
-            r#"(?i)<meta[^>]+name=[\"']{name}[\"'][^>]+content=[\"']([^\"']+)"#
-        ))
-        .map_err(|e| e.to_string())?;
-        if let Some(captures) = pattern.captures(body) {
-            let raw = decode_html_entities(captures.get(1).unwrap().as_str()).to_string();
+    let document = scraper::Html::parse_document(body);
+    let selector = scraper::Selector::parse("meta").expect("valid meta selector");
+    for name in ["ol-prefetchedProjectsBlob", "ol-projects"] {
+        let content = document.select(&selector).find_map(|meta| {
+            let attributes = meta.value();
+            attributes
+                .attr("name")
+                .filter(|value| value.eq_ignore_ascii_case(name))
+                .and_then(|_| attributes.attr("content"))
+        });
+        if let Some(raw) = content {
             let value: serde_json::Value =
-                serde_json::from_str(&raw).map_err(|e| format!("项目数据解析失败：{e}"))?;
+                serde_json::from_str(raw).map_err(|e| format!("项目数据解析失败：{e}"))?;
             let list = value
                 .get("projects")
                 .and_then(|v| v.as_array())
@@ -279,8 +282,7 @@ impl Session {
                     ))
                 }
             };
-            if retry::retryable_status(response.status()) && attempt + 1 < retry::MAX_ATTEMPTS {
-                retry::wait_before_retry(attempt);
+            if retry::wait_for_response_retry(&response, attempt) {
                 continue;
             }
             check_status(&response, "读取项目")?;
@@ -372,13 +374,12 @@ fn download_zip<R: tauri::Runtime>(
             }
             Err(error) => return Err(format!("下载失败（已尝试 {} 次）：{error}", attempt + 1)),
         };
-        if retry::retryable_status(response.status()) && attempt + 1 < retry::MAX_ATTEMPTS {
+        if retry::wait_for_response_retry(&response, attempt) {
             last_error = format!("HTTP {}", response.status());
             eprintln!(
                 "下载尝试 {} 失败（可重试，字节数重置为 0）：{last_error}",
                 attempt + 1
             );
-            retry::wait_before_retry(attempt);
             continue;
         }
         check_status(&response, "下载")?;
@@ -586,6 +587,46 @@ fn confirm_upload(reader: impl Read) -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod project_parser_tests {
+    use super::projects_from_html;
+
+    #[test]
+    fn parses_real_html_attributes_and_decodes_entities_once() {
+        let html = r#"
+            <script>const fake = '<meta name="ol-projects" content="not json">';</script>
+            <META content='[{"_id":"1","name":"Alice&apos;s &amp; Bob &gt; C &amp;quot;","owner":{"email":"a@example.com"},"lastUpdated":"today"}]'
+                  data-note="a > b" NAME="OL-PROJECTS">
+        "#;
+        let projects = projects_from_html(html).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "1");
+        assert_eq!(projects[0].name, "Alice's & Bob > C &quot;");
+        assert_eq!(projects[0].owner.as_deref(), Some("a@example.com"));
+        assert_eq!(projects[0].last_updated.as_deref(), Some("today"));
+    }
+
+    #[test]
+    fn parses_double_quoted_json_and_filters_archived_and_trashed() {
+        let html = r#"<meta content="{&quot;projects&quot;:[{&quot;id&quot;:&quot;1&quot;,&quot;name&quot;:&quot;Author's project&quot;},{&quot;id&quot;:&quot;2&quot;,&quot;name&quot;:&quot;old&quot;,&quot;archived&quot;:true},{&quot;id&quot;:&quot;3&quot;,&quot;name&quot;:&quot;trash&quot;,&quot;trashed&quot;:true}]}" name="ol-prefetchedProjectsBlob">"#;
+        let projects = projects_from_html(html).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "1");
+        assert_eq!(projects[0].name, "Author's project");
+    }
+
+    #[test]
+    fn prefers_prefetched_blob_and_reports_missing_or_invalid_data() {
+        let html = r#"<meta name="ol-projects" content='[{"id":"old","name":"old"}]'>
+            <meta name="ol-prefetchedProjectsBlob" content='{"projects":[{"id":"new","name":"new"}]}'>"#;
+        let projects = projects_from_html(html).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "new");
+        assert!(projects_from_html("<html>Login</html>").is_err());
+        assert!(projects_from_html(r#"<meta name="ol-projects" content="invalid">"#).is_err());
+    }
+}
+
+#[cfg(test)]
 mod upload_tests {
     use super::{confirm_upload, Session};
     use reqwest::blocking::Client;
@@ -605,6 +646,30 @@ mod upload_tests {
             assert!(confirm_upload(body.as_bytes()).is_err(), "{body}");
         }
         assert!(confirm_upload(&br#"{"success":true,"project_id":"123"}"#[..]).is_ok());
+    }
+
+    #[test]
+    fn project_page_retries_throttled_response() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 1024];
+                stream.read(&mut request).unwrap();
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let session = Session {
+            base: format!("http://{address}"),
+            http: Client::builder().build().unwrap(),
+            csrf: Mutex::new(None),
+        };
+        assert_eq!(session.project_page().unwrap(), "ok");
+        server.join().unwrap();
     }
 
     #[test]
